@@ -1,0 +1,9 @@
+I have reorganized parts of FFA that do not make use of CFFI into a
+separate package, ARRAY-OPERATIONS in July, 2008.
+
+The tutorial for this package is still in the FFA package, in the
+documentation subdirectory, because the two packages are closely
+related.  Nevertheless, if you just need array operations, you should
+use ARRAY-OPERATIONS as it does not depend on CFFI.
+
+Tamas Papp <tpapp@princeton.edu>

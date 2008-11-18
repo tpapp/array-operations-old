@@ -34,7 +34,7 @@ from the original array."
 displaced to the original array.  Also return the index-offset and
 length (total size).  Useful for passing to reduce etc."
   (bind ((total-size (array-total-size array))
-	 ((values original-array index-offset) (find-original-array array)))
+	 ((:values original-array index-offset) (find-original-array array)))
     (if (= (array-rank original-array) 1)
 	(values original-array index-offset total-size)
 	(values (displace-array original-array total-size index-offset)
@@ -53,7 +53,7 @@ recursively, if you need that, use array-map."
 resulting array has the given element-type."
   (bind ((result (make-ffa (array-dimensions array) element-type))
 	 (result-flat (find-original-array result))
-	 ((values array-flat index-offset length)
+	 ((:values array-flat index-offset length)
 	  (find-or-displace-to-flat-array array)))
     (iter
       (for result-index :from 0 :below length)

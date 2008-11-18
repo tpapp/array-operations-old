@@ -22,6 +22,7 @@
    outer-product array-elementwise-operation array+ array- array*
    array/ array-scalar+ array-scalar- array-scalar* array-scalar/
    array-reciprocal array-negate array-map-list array-map-values
-   index-extrema array-extrema vectorize
+   index-extrema array-extrema vectorize map-vector-to-matrix
+   array-find-min
    
    ))

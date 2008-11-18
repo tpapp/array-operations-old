@@ -47,15 +47,17 @@ the array."
   (array-reduce #'+ array :key (lambda (x) (if (funcall predicate x) 1 0))))
 
 (defun array-range (array &key key ignore-nil-p)
-  "Minimum and maximum of an array, returned as a two-element list."
+  "Minimum and maximum of an array, returned as a two-element list.
+In case all elements are nil, return (nil nil)."
   (let ((range (array-reduce (lambda (x y)
 			       (if (atom x)
 				   (list (min x y) (max x y))
 				   (list (min (first x) y) (max (second x) y))))
 			     array :key key :ignore-nil-p ignore-nil-p)))
-    (if (atom range)
-	(list range range)		; single non-nil element
-	range)))
+    (cond
+      ((null range) nil)		; all are nil
+      ((atom range) (list range range))	; single non-nil element
+      (t range))))
 
 (defun array-abs-range (array &key key ignore-nil-p)
   "Maximum of the absolute values of the elements of an array."
@@ -81,7 +83,7 @@ the array."
 (defun outer-product (x y &key (function #'*) (element-type (array-element-type x)))
   "Calculate the (generalized) outer product of vectors x and y.  When
 not specified, element-type will be the element-type of x."
-  (declare ((vector * *) x y))
+  (declare (type (vector * *) x y))
   (let* ((x-length (array-dimension x 0))
 	 (y-length (array-dimension y 0))
 	 (result (make-ffa (list x-length y-length) element-type)))
@@ -302,3 +304,42 @@ element type, you need to use coerce explicitly in `expression'."
 	       ,result)))))))
 
 ;;; !!!! should do something for simpons-rule-on-index
+
+
+(defun map-vector-to-matrix (function vector)
+  "Call `function' that maps an atom to a vector on each element of
+`vector', and collect the results as columns of a matrix.  The
+array-element-type and dimensions of the matrix are established
+automatically by calling `function' on (aref vector 0), so `function'
+needs to return the same kind of vector all the time."
+  (assert (and (vectorp vector) (plusp (length vector))))
+  (let* ((first-result (funcall function (aref vector 0)))
+	 (m (length first-result))
+	 (n (length vector))
+	 (matrix (make-array (list m n) 
+			     :element-type (array-element-type first-result))))
+    (dotimes (j n)
+      (let ((result (if (zerop j)
+			first-result
+			(funcall function (aref vector j)))))
+	(assert (vectorp result))
+	(dotimes (i m)
+	  (setf (aref matrix i j) (aref result i)))))
+    matrix))
+
+(defun array-find-min (array &optional (key #'identity))
+  "Find the element of array which returns the smallest (funcall key
+element), where key should return a real number.  Return (values
+min-element min-key)."
+  (bind (((:values flat-array start length) (find-or-displace-to-flat-array array))
+	 (end (+ start length))
+	 (min-element (aref flat-array start))
+	 (min-key (funcall key min-element)))
+    (iter
+      (for i :from (1+ start) :below end)
+      (for element := (aref flat-array i))
+      (for element-key := (funcall key element))
+      (when (< element-key min-key)
+	(setf min-key element-key
+	      min-element element)))
+    (values min-element min-key)))

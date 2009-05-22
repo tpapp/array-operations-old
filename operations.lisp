@@ -1,5 +1,10 @@
 (in-package :array-operations)
 
+;;;;  !!! HUGE FIXES ARE NEEDED
+;;;; - remove find-or-displace-to-flat-array
+;;;; - make result elemet type automatic where possible
+;;;; - multiparam elementwise operations, inline for speed
+
 (defun ignoring-nil (function)
   "From a bivariate function, create a function that calls the
 original if both arguments are non-nil, otherwise returns the argument
@@ -12,62 +17,83 @@ when calling reduce."
 	(b b)
 	(t nil))))
 
-(defun array-reduce (function array &key key ignore-nil-p)
-  "Apply (reduce function ...) to the flattened array.  If
-ignore-nil-p is given, it behaves as if nil elements were removed from
-the array."
-  (bind (((:values flat-array start length) (find-or-displace-to-flat-array array))
-	 (end (+ start length)))
-    (if ignore-nil-p
-	(reduce (ignoring-nil function)
-		flat-array
-		:key key :start start :end end :initial-value nil)
-	(reduce function
-		flat-array
-		:key key :start start :end end))))
+(defun array-reduce (function array &key key ignore-p all-ignored)
+  "Apply (reduce function ...) to the flattened array.  If ignore-p is
+given, it behaves as if elements which satisfy ignore-p (ie return
+non-nil for (funcall ignore-p element) were removed from the array.
+When all elements are ignored, the value is all-ignored. ignore-p is
+called before key."
+  (declare (optimize (debug 3)))
+  (bind (((:values original start) (find-original-array array))
+	 (size (array-total-size array))
+	 (end (+ start size)))
+    (when (zerop size)
+      (return-from array-reduce all-ignored))
+    (unless key
+      (setf key #'identity))
+    (if ignore-p
+	(let ((val all-ignored))
+	  ;; bit of a hole in here, should keep track of whether there
+	  ;; has been a non-nil variable separately, instead of using
+	  ;; equal on val and all-ignored
+	  (iter
+	    (for i :from start :below end)
+	    (for v := (row-major-aref original i))
+	    (unless (funcall ignore-p v)
+	      (let ((v-key (funcall key v)))
+		(setf val (if (equal val all-ignored)
+			      v-key
+			      (funcall function val v-key))))))
+	  val)
+	(let ((val (funcall key (row-major-aref array start))))
+	  (iter
+	    (for i :from (1+ start) :below end)
+	    (setf val (funcall function val 
+			       (funcall key (row-major-aref original i)))))
+	  val))))
 
-(defun array-max (array &key key ignore-nil-p)
+(defun array-max (array &key key ignore-p)
   "Find the maximum in array."
-  (array-reduce #'max array :key key :ignore-nil-p ignore-nil-p))
+  (array-reduce #'max array :key key :ignore-p ignore-p))
 
-(defun array-min (array &key key ignore-nil-p)
+(defun array-min (array &key key ignore-p)
   "Find the minimum in array."
-  (array-reduce #'min array :key key :ignore-nil-p ignore-nil-p))
+  (array-reduce #'min array :key key :ignore-p ignore-p))
 
-(defun array-sum (array &key key ignore-nil-p)
+(defun array-sum (array &key key ignore-p)
   "Sum of the elements in array."
-  (array-reduce #'+ array :key key :ignore-nil-p ignore-nil-p))
+  (array-reduce #'+ array :key key :ignore-p ignore-p))
 
-(defun array-product (array &key key ignore-nil-p)
+(defun array-product (array &key key ignore-p)
   "Product of the elements in array."
-  (array-reduce #'* array :key key :ignore-nil-p ignore-nil-p))
+  (array-reduce #'* array :key key :ignore-p ignore-p))
 
 (defun array-count (array predicate)
   "Count elements in array satisfying predicate."
   (array-reduce #'+ array :key (lambda (x) (if (funcall predicate x) 1 0))))
 
-(defun array-range (array &key key ignore-nil-p)
+(defun array-range (array &key key ignore-p)
   "Minimum and maximum of an array, returned as a two-element list.
 In case all elements are nil, return (nil nil)."
   (let ((range (array-reduce (lambda (x y)
 			       (if (atom x)
 				   (list (min x y) (max x y))
 				   (list (min (first x) y) (max (second x) y))))
-			     array :key key :ignore-nil-p ignore-nil-p)))
+			     array :key key :ignore-p ignore-p)))
     (cond
       ((null range) nil)		; all are nil
-      ((atom range) (list range range))	; single non-nil element
+      ((atom range) (list range range))	; single non element
       (t range))))
 
-(defun array-abs-range (array &key key ignore-nil-p)
+(defun array-abs-range (array &key key ignore-p)
   "Maximum of the absolute values of the elements of an array."
   (array-reduce (lambda (x y) (max (abs x) (abs y))) array
-		:key key :ignore-nil-p ignore-nil-p))
+		:key key :ignore-p ignore-p))
 
-(defun array-mean (array &key key ignore-nil-p)
+(defun array-mean (array &key key ignore-p)
   "Calculate the mean of the elements in array."
-  (/ (array-sum array :key key :ignore-nil-p ignore-nil-p)
-     (if ignore-nil-p
+  (/ (array-sum array :key key :ignore-p ignore-p)
+     (if ignore-p
 	 (array-count array #'not)
 	 (length array))))
 
@@ -86,7 +112,7 @@ not specified, element-type will be the element-type of x."
   (declare (type (vector * *) x y))
   (let* ((x-length (array-dimension x 0))
 	 (y-length (array-dimension y 0))
-	 (result (make-ffa (list x-length y-length) element-type)))
+	 (result (make-array (list x-length y-length) :element-type element-type)))
     (dotimes (i x-length)
       (dotimes (j y-length)
 	(setf (aref result i j) (funcall function (aref x i) (aref y j)))))
@@ -98,35 +124,34 @@ elementwise, returning the resulting array, which has the given
 element-type."
   (let ((dimensions (array-dimensions a)))
     (assert (equal dimensions (array-dimensions b)))
-    (bind (((:values a-flat a-index-offset length)
-	    (find-or-displace-to-flat-array a))
-	   ((:values b-flat b-index-offset)
-	    (find-or-displace-to-flat-array b))
-	   (result (make-ffa dimensions element-type))
-	   (result-flat (find-original-array result)))
+    (bind (((:values a-original a-index-offset) (find-original-array a))
+	   ((:values b-original b-index-offset) (find-original-array b))
+	   (length (array-total-size a-original))
+	   (result (make-array dimensions :element-type element-type)))
+      (assert (= length (array-total-size b-original)))
       (iter
 	(for index :from 0 :below length)
 	(for a-index :from a-index-offset)
 	(for b-index :from b-index-offset)
-	(setf (aref result-flat index)
+	(setf (row-major-aref result index)
 	      (funcall operator
-		       (aref a-flat a-index)
-		       (aref b-flat b-index))))
+		       (row-major-aref a-original a-index)
+		       (row-major-aref b-original b-index))))
       result)))
 
 ;; elementwise operations
 
-(defun array+ (a b &optional (element-type :double))
+(defun array+ (a b &optional (element-type 'double-float))
   (array-elementwise-operation #'+ a b element-type))
-(defun array- (a b &optional (element-type :double))
+(defun array- (a b &optional (element-type 'double-float))
   (array-elementwise-operation #'- a b element-type))
-(defun array* (a b &optional (element-type :double))
+(defun array* (a b &optional (element-type 'double-float))
   (array-elementwise-operation #'* a b element-type))
-(defun array/ (a b &optional (element-type :double))
+(defun array/ (a b &optional (element-type 'double-float))
   (array-elementwise-operation #'/ a b element-type))
 
 (defmacro define-array-scalar-binary-operation (name operator)
-  `(defun ,name (a b &optional (element-type :double))
+  `(defun ,name (a b &optional (element-type 'double-float))
      (array-map (lambda (x) (,operator x b)) a element-type)))
 
 (define-array-scalar-binary-operation array-scalar+ +)
@@ -134,13 +159,13 @@ element-type."
 (define-array-scalar-binary-operation array-scalar* *)
 (define-array-scalar-binary-operation array-scalar/ /)
 
-(defun array-reciprocal (a &optional b (element-type :double))
+(defun array-reciprocal (a &optional b (element-type 'double-float))
   "For each element x of a, map to (/ x) or (/ b x) (if b is given)."
   (if b
       (array-map (lambda (x) (/ b x)) a element-type)
       (array-map (lambda (x) (/ x)) a element-type)))
 
-(defun array-negate (a &optional b (element-type :double))
+(defun array-negate (a &optional b (element-type 'double-float))
   "For each element x of a, map to (- x) or (- b x) (if b is given)."
   (if b
       (array-map (lambda (x) (- b x)) a element-type)
@@ -153,7 +178,8 @@ each element of array, returning the results in an array which has an
 extra last dimension of n."
   (let* ((dimensions (array-dimensions array))
 	 (total-size (array-total-size array))
-	 (result (make-ffa (append dimensions (list n)) element-type))
+	 (result (make-array (append dimensions (list n)) 
+			     :element-type element-type))
 	 (result-matrix (displace-array result (list total-size n) 0)))
     (dotimes (i total-size result)
       (let ((value (funcall function (row-major-aref array i))))
@@ -343,3 +369,14 @@ min-element min-key)."
 	(setf min-key element-key
 	      min-element element)))
     (values min-element min-key)))
+
+(defun transpose (matrix)
+  "Transpose a matrix."
+  (check-type matrix (array * (* *)))
+  (bind (((rows cols) (array-dimensions matrix))
+	 (transpose (make-array (list cols rows) 
+				:element-type (array-element-type matrix))))
+    (dotimes (i rows)
+      (dotimes (j cols)
+	(setf (aref transpose j i) (aref matrix i j))))
+    transpose))

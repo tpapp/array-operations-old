@@ -9,7 +9,6 @@
   :license "GPL"
   :serial t
   :components ((:file "package")
-	       (:file "ffa" :depends-on ("package"))
-	       (:file "displaced-utils" :depends-on ("ffa"))
-	       (:file "operations" :depends-on ("displaced-utils")))
+	       (:file "displaced-utils")
+	       (:file "operations"))
   :depends-on (:cffi :cl-utilities :metabang-bind :iterate))

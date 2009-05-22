@@ -5,15 +5,10 @@
   (:shadowing-import-from :iterate :collecting :collect)
   (:export 
 
-   ;; ffa
-
-   match-cffi-element-type make-ffa
-
    ;; displaced-utils
 
    displace-array flatten-array find-original-array
-   find-or-displace-to-flat-array array-copy array-map array-map!
-   array-convert
+   array-copy array-map array-map! array-convert
 
    ;; operations
 
@@ -23,6 +18,6 @@
    array/ array-scalar+ array-scalar- array-scalar* array-scalar/
    array-reciprocal array-negate array-map-list array-map-values
    index-extrema array-extrema vectorize map-vector-to-matrix
-   array-find-min
+   array-find-min transpose
    
    ))

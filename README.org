@@ -1,0 +1,1 @@
+This library is *deprecated*, and has been superseded by a [[https://github.com/tpapp/array-operations][new version]].
